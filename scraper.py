@@ -1,61 +1,75 @@
 import os
-import json
-import requests
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from datetime import datetime, timedelta, timezone
-from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-# خواندن کلیدها از محیط امن گیت‌هاب
-TELEGRAM_SESSION = os.environ.get('TELEGRAM_SESSION')
-MAKE_WEBHOOK = os.environ.get('MAKE_WEBHOOK')
+# توکن‌ها را دقیقاً بین دو علامت ' ' قرار بده
+TELEGRAM_SESSION = '1BJWap1sBu2XKWMT5SwprfeGaIfE1koAMWJXZJoBvWff4v0pf2WPk0R4U0g_20EnvjHu-dFw7fYQKMab_OOZGIX2dUtra7lXyNeaChV0Gpv1YG2MRAGDkwMpd5at6267VY2Qx8nX-VQ17J188CehJwVzXlt4rI6fw-Th6uoBEcmGC_9Ac3xkSsvMF422gTvL14QurSjvTa_BYWG7IJ2IUSz6vMNQJyzGYAryV0UmAWBA208lEyA5LN_Sk1QMdm63EVJeK8Ndh53bnJsZUh5J-3fbSBB2BAOQY6ytEWXu9diNptEd9rD_UCihIuGpdKLltvrwgBK6QZW_5MlZ_U0chnGYV-nqdItg='
 
-# 🛑 لیست کانال‌های شما مستقیماً جایگذاری شد 🛑
-TARGET_CHANNELS = ['wmback', 'EPW_MAGAZINE', 'business_magazines', 'allmagss', 'dailynewspaper88magzine', 'dailynewspaper88']
+CLIENT_ID = '322682178837-8otjk7ikh9g4p30ujalr5se1u4f40lgu.apps.googleusercontent.com'
+CLIENT_SECRET = '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'
+REFRESH_TOKEN = '1//04Ez3eeAlSOcsCgYIARAAGAQSNwF-L9IrQPFdyMUTZ8Rv17e_RbFFtOK4rB9Nm2ntqfdombK6Eo17wyscbUgBOoS_-ZzLFHGhCAM'
 
-# 🛑 فقط این یک مورد را با آیدی پوشه خود که در بالا توضیح دادم جایگزین کنید 🛑
+TARGET_CHANNELS = ['favemags', 'dailynewspaper88', 'EPW_MAGAZINE', 'business_magazines', 'dailynewspaper88magzine', 'wmback']
 DRIVE_FOLDER_ID = '15Vp0_f6BN_Ia_hsVE4xFqAXjRr-lnA0x' 
 
-# کلیدهای عمومی تلگرام دسکتاپ
 API_ID = 2040
 API_HASH = 'b18441a1ff607e10a989891a5462e627'
 
-# احراز هویت گوگل درایو
 try:
-    credentials_dict = json.loads(os.environ.get('GDRIVE_CREDENTIALS'))
-    credentials = service_account.Credentials.from_service_account_info(credentials_dict, scopes=['https://www.googleapis.com/auth/drive'])
+    credentials = Credentials(
+        token=None,
+        refresh_token=REFRESH_TOKEN,
+        token_uri='https://oauth2.googleapis.com/token',
+        client_id=CLIENT_ID,
+        client_secret=CLIENT_SECRET
+    )
     drive_service = build('drive', 'v3', credentials=credentials)
     print("✅ احراز هویت گوگل درایو موفق بود.")
 except Exception as e:
     print(f"❌ خطا در کلیدهای گوگل درایو: {e}")
     exit(1)
 
-# راه‌اندازی کلاینت تلگرام
 client = TelegramClient(StringSession(TELEGRAM_SESSION), API_ID, API_HASH)
+
+def check_file_exists_in_drive(file_name):
+    """بررسی اینکه آیا فایلی با این نام قبلاً در پوشه گوگل درایو آپلود شده است یا خیر"""
+    try:
+        # ایمن‌سازی نام فایل برای کوئری گوگل درایو
+        safe_name = file_name.replace("'", "\\'")
+        query = f"name = '{safe_name}' and '{DRIVE_FOLDER_ID}' in parents and trashed = false"
+        results = drive_service.files().list(q=query, fields="files(id)").execute()
+        return len(results.get('files', [])) > 0
+    except Exception as e:
+        print(f"⚠️ خطا در بررسی تکراری بودن فایل در درایو: {e}")
+        return False
 
 async def main():
     await client.start()
     print("✅ اتصال به تلگرام موفقیت‌آمیز بود.")
     
-    # جستجو در پیام‌های 24 ساعت گذشته
+    # بررسی پیام‌های ۲۴ ساعت گذشته برای شکار جدیدترین‌ها
     time_limit = datetime.now(timezone.utc) - timedelta(days=1)
     
-    # چرخش روی تمام کانال‌های ارسالی شما
     for channel in TARGET_CHANNELS:
         print(f"\n🔍 در حال اسکن کانال: {channel}")
         try:
             async for message in client.iter_messages(channel, offset_date=time_limit, reverse=True):
                 if message.document and message.document.mime_type == 'application/pdf':
                     file_name = message.document.attributes[0].file_name if message.document.attributes else "document.pdf"
-                    print(f"📥 فایل یافت شد. شروع دانلود: {file_name}")
                     
-                    # دانلود فایل
+                    # گام حیاتی: اگر فایل از قبل در درایو باشد، اصلاً پردازش نمی‌شود
+                    if check_file_exists_in_drive(file_name):
+                        print(f"⏭️ فایل '{file_name}' قبلاً در گوگل درایو آپلود شده است. اسکیپ شد.")
+                        continue
+                        
+                    print(f"📥 فایل جدید یافت شد. شروع دانلود: {file_name}")
                     file_path = await message.download_media()
-                    print("✅ دانلود تمام شد. در حال انتقال به گوگل درایو...")
+                    print("✅ دانلود تمام شد. در حال انتقال به گوگل درایو شخصی...")
                     
-                    # آپلود در گوگل درایو
                     try:
                         file_metadata = {'name': file_name, 'parents': [DRIVE_FOLDER_ID]}
                         media = MediaFileUpload(file_path, mimetype='application/pdf', resumable=True)
@@ -63,24 +77,10 @@ async def main():
                         
                         print(f"✅ آپلود انجام شد. ID فایل: {uploaded_file.get('id')}")
                         
-                        # ارسال سیگنال به Make.com
-                        payload = {
-                            "file_name": file_name,
-                            "drive_file_id": uploaded_file.get('id'),
-                            "direct_download_link": f"https://drive.google.com/uc?export=download&id={uploaded_file.get('id')}"
-                        }
-                        response = requests.post(MAKE_WEBHOOK, json=payload)
-                        
-                        if response.status_code == 200:
-                            print("🚀 سیگنال با موفقیت به Make ارسال شد.")
-                        else:
-                            print(f"⚠️ سیگنال ارسال شد اما Make ارور داد: {response.text}")
-                            
                     except Exception as e:
-                        print(f"❌ خطا در آپلود یا ارسال وب‌هوک: {e}")
+                        print(f"❌ خطا در آپلود فایل: {e}")
                     
                     finally:
-                        # پاک کردن فایل از سرور موقت برای جلوگیری از پر شدن فضا
                         if os.path.exists(file_path):
                             os.remove(file_path)
         except Exception as e:
